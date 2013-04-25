@@ -17,10 +17,36 @@
   #include <WProgram.h> // Arduino 0022
 #endif
 
+//DEFINES-------------------------------------------------------------------------
+
+//Carrier Mode
+#define CARRIERMODE_38K	38
+
+//Bit Order
+#define FIRSTBIT_LSB 	0b00000001
+#define FIRSTBIT_MSB 	0b10000000
+
+//Chunk Size
+#define CHUNKSIZE_NIBBLE 4
+#define CHUNKSIZE_BYTE 8
+
 class IRduino {
 public:
+	//sequences
+	static uint16_t *oneSQ;
+	static uint8_t oneSQlen;
+
+	static uint16_t *zeroSQ;
+	static uint8_t zeroSQlen;
+
+	static uint16_t *startSQ;
+	static uint8_t startSQlen;
+
+	static uint16_t *stopSQ;
+	static uint8_t stopSQlen;
+
 	//init
-	static void init(uint8_t carrierMode, uint8_t chunkOrder, uint8_t chunkSize);
+	static void init(uint8_t carrierMode, uint8_t startBit, uint8_t chunkSize);
 
 	//main functions
 	static uint8_t bufferChunk(uint8_t chunk);

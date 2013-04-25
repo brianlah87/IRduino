@@ -10,27 +10,24 @@
 
 //PROTOCOL SEQUENCES-----------------------------------------------------------------
 
-const uint16_t oneSQ[] = {13,34};
-const uint8_t oneSQLen = 2;
+uint16_t *IRduino::oneSQ;
+uint8_t IRduino::oneSQlen;
 
-const uint16_t zeroSQ[] = {13,15};
-const uint8_t zeroSQLen = 2;
+uint16_t *IRduino::zeroSQ;
+uint8_t IRduino::zeroSQlen;
 
-const uint16_t startSQ[] = {177,96};
-const uint8_t startSQLen = 2;
+uint16_t *IRduino::startSQ;
+uint8_t IRduino::startSQlen;
 
-const uint16_t stopSQ[] = {13,796,148};
-const uint8_t stopSQLen = 3;
+uint16_t *IRduino::stopSQ;
+uint8_t IRduino::stopSQlen;
 
-uint8_t chunkBuffer[255];
-uint8_t chunkBufferEnd = 0;
+//INTERRUPT COUNTING TIMER-----------------------------------------------------------
 
-volatile uint8_t pulseRunning = false;
-volatile uint16_t pulseCount = 0;
-
+volatile uint16_t irPulseCount = 0;
 ISR(TIMER2_COMPB_vect)
 {
-	pulseCount++;	//increment counter every tick
+	irPulseCount++;	//increment counter every tick
 }
 
 void irSequenceTransmit(const uint16_t *sequence, uint8_t length)
@@ -44,10 +41,10 @@ void irSequenceTransmit(const uint16_t *sequence, uint8_t length)
 			TCCR2A &= ~_BV(COM2B1);	//OFF for every odd pulse of sequence
 
 		//reset pulse counter
-		pulseCount = 0;
+		irPulseCount = 0;
 
 		//block until the counter exceeds pulse duration
-		while(pulseCount <= sequence[pulseIndex])
+		while(irPulseCount <= sequence[pulseIndex])
 		{}
 
 		//next pulse in sequence
@@ -60,25 +57,42 @@ void irSequenceTransmit(const uint16_t *sequence, uint8_t length)
 
 //PUBLIC FUNCTIONS--------------------------------------------------------------------
 
-void IRduino::init(uint8_t carrierMode, uint8_t chunkOrder, uint8_t chunkSize)
-{
-	pinMode(3, OUTPUT);		//set pin to output mode
+uint8_t irChunkBuffer[255];
+uint8_t irChunkBufferEnd = 0;
 
+uint8_t irCarrierMode;
+uint8_t irFirstBit;
+uint8_t irChunkSize;
+
+void IRduino::init(uint8_t carrierMode, uint8_t firstBit, uint8_t chunkSize)
+{
+	irCarrierMode = carrierMode;
+	irFirstBit = firstBit;
+	irChunkSize = chunkSize;
+
+	pinMode(3, OUTPUT);		//set pin to output mode
 	TCCR2A = _BV(WGM21) | _BV(WGM20); // Just enable output on Pin 3 and disable it on Pin 11
 	TCCR2B = _BV(WGM22) | _BV(CS22);
-	OCR2A = 51; // defines the frequency 51 = 38.4 KHz, 54 = 36.2 KHz, 58 = 34 KHz, 62 = 32 KHz
-	OCR2B = 26;  // deines the duty cycle - Half the OCR2A value for 50%
-	TCCR2B = TCCR2B & 0b00111000 | 0x2; // select a prescale value of 8:1 of the system clock
+
+	switch(irCarrierMode)
+	{
+		case CARRIERMODE_38K:
+		default:
+			OCR2A = 51; // defines the frequency 51 = 38.4 KHz, 54 = 36.2 KHz, 58 = 34 KHz, 62 = 32 KHz
+			OCR2B = 26;  // deines the duty cycle - Half the OCR2A value for 50%
+			TCCR2B = TCCR2B & 0b00111000 | 0x2; // select a prescale value of 8:1 of the system clock
+			break;
+	}
 
 	TIMSK2 = _BV(OCIE2B);	// Output Compare Match B Interrupt Enable
 }
 
 uint8_t IRduino::bufferChunk(uint8_t chunk)
 {
-	if(chunkBufferEnd < 255)
+	if(irChunkBufferEnd < 255)
 	{
-		chunkBuffer[chunkBufferEnd] = chunk;
-		chunkBufferEnd++;
+		irChunkBuffer[irChunkBufferEnd] = chunk;
+		irChunkBufferEnd++;
 	}
 
 	return chunk;
@@ -86,42 +100,42 @@ uint8_t IRduino::bufferChunk(uint8_t chunk)
 
 void IRduino::bufferReset()
 {
-	chunkBufferEnd = 0;
+	irChunkBufferEnd = 0;
 }
 
 void IRduino::bufferTransmit()
 {
 	//transmit start
-	irSequenceTransmit(startSQ, startSQLen);
+	irSequenceTransmit(startSQ, startSQlen);
 
-	//transmit the buffer
+	//transmit everything in the buffer
 	uint8_t chunkIndex = 0;
-	while(chunkIndex < chunkBufferEnd)
+	while(chunkIndex < irChunkBufferEnd)
 	{
-		uint8_t chunkMask = 0b00000001;
-		while(chunkMask <= 0b00001000)
+		//transmit all bits in this chunk
+		uint8_t chunkMask = irFirstBit;		//init the mask to the first bit to send
+		uint8_t bitIndex = 0;
+		while(bitIndex < irChunkSize)
 		{
-			if(chunkBuffer[chunkIndex] & chunkMask)
-			{
-				//send 1
-				irSequenceTransmit(oneSQ, oneSQLen);
-			}
+			//transmit this bit
+			if(irChunkBuffer[chunkIndex] & chunkMask)
+				irSequenceTransmit(oneSQ, oneSQlen);
 			else
-			{
-				//send 0
-				irSequenceTransmit(zeroSQ, zeroSQLen);
-			}
+				irSequenceTransmit(zeroSQ, zeroSQlen);
 
-			//next bit
-			chunkMask <<= 1;
+			//shift the mask for the next bit
+			if(irFirstBit == FIRSTBIT_LSB)
+				chunkMask <<= 1;
+			else
+				chunkMask >>= 1;
+
+			bitIndex++;
 		}
-
-		//next chunk
 		chunkIndex += 1;
 	}
 
 	//transmit end
-	irSequenceTransmit(stopSQ, stopSQLen);
+	irSequenceTransmit(stopSQ, stopSQlen);
 }
 
 //CONVENIENCE FUNCTIONS----------------------------------------------------------------
